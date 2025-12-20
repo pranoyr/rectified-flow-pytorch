@@ -854,7 +854,7 @@ class Unet(Module):
     def downsample_factor(self):
         return 2 ** (len(self.downs) - 1)
 
-    def forward(self, x, times, cond = None):
+    def forward(self, x, times, s = None, cond = None):
         assert all([divisible_by(d, self.downsample_factor) for d in x.shape[-2:]]), f'your input dimensions {x.shape[-2:]} need to be divisible by {self.downsample_factor}, given the unet'
 
         x = self.init_conv(x)
@@ -862,6 +862,12 @@ class Unet(Module):
         r = x.clone()
 
         t = self.time_mlp(times)
+
+        # maybe additional time cond
+
+        if exists(s):
+            s = self.time_mlp(s)
+            t = t + s
 
         # maybe additional cond
 
