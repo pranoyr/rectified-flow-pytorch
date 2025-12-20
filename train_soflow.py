@@ -42,7 +42,8 @@ device = torch.device('cuda' if is_cuda_available else 'cpu')
 
 model = Unet(
     dim = 64,
-    accept_cond = False
+    accept_cond = False,
+    accept_dest_time = True 
 )
 
 soflow = SoFlow(

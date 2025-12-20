@@ -732,6 +732,7 @@ class Unet(Module):
         num_residual_streams = 2,
         accept_cond = False,
         dim_cond = None,
+        accept_dest_time = False,
         num_outputs = 1
     ):
         super().__init__()
@@ -765,6 +766,12 @@ class Unet(Module):
             nn.GELU(),
             nn.Linear(time_dim, time_dim)
         )
+
+        # destination time encoding - for a variety of newer consistency research related work
+
+        self.dest_time_mlp = None
+        if accept_dest_time:
+            self.dest_time_mlp = deepcopy(self.time_mlp)
 
         # additional cond mlp
 
@@ -866,7 +873,8 @@ class Unet(Module):
         # maybe additional time cond
 
         if exists(s):
-            s = self.time_mlp(s)
+            assert exists(self.dest_time_mlp)
+            s = self.dest_time_mlp(s)
             t = t + s
 
         # maybe additional cond
