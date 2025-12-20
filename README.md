@@ -258,3 +258,15 @@ $ python train_oxford.py
     note    = {under review}
 }
 ```
+
+```bibtex
+@misc{luo2025soflowsolutionflowmodels,
+    title   = {SoFlow: Solution Flow Models for One-Step Generative Modeling}, 
+    author  = {Tianze Luo and Haotian Yuan and Zhuang Liu},
+    year    = {2025},
+    eprint  = {2512.15657},
+    archivePrefix = {arXiv},
+    primaryClass = {cs.LG},
+    url     = {https://arxiv.org/abs/2512.15657}, 
+}
+```
