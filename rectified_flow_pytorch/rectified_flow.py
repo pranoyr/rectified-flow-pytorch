@@ -540,10 +540,10 @@ def Downsample(dim, dim_out = None):
     )
 
 class RMSNorm(Module):
-    def __init__(self, dim):
+    def __init__(self, dim, has_scale = True):
         super().__init__()
         self.scale = dim ** 0.5
-        self.gamma = nn.Parameter(torch.zeros(dim, 1, 1))
+        self.gamma = nn.Parameter(torch.zeros(dim, 1, 1)) if has_scale else 0
 
     def forward(self, x):
         return F.normalize(x, dim = 1) * (self.gamma + 1) * self.scale
@@ -580,10 +580,10 @@ class RandomOrLearnedSinusoidalPosEmb(Module):
         return fouriered
 
 class Block(Module):
-    def __init__(self, dim, dim_out, dropout = 0.):
+    def __init__(self, dim, dim_out, dropout = 0., accept_cond = False):
         super().__init__()
         self.proj = nn.Conv2d(dim, dim_out, 3, padding = 1)
-        self.norm = RMSNorm(dim_out)
+        self.norm = RMSNorm(dim_out, has_scale = not accept_cond)
         self.act = nn.SiLU()
         self.dropout = nn.Dropout(dropout)
 
@@ -602,13 +602,15 @@ class Block(Module):
 class ResnetBlock(Module):
     def __init__(self, dim, dim_out, *, time_emb_dim = None, dropout = 0.):
         super().__init__()
+        has_time_cond = exists(time_emb_dim)
+
         self.mlp = nn.Sequential(
             nn.SiLU(),
             nn.Linear(time_emb_dim, dim_out * 2)
-        ) if exists(time_emb_dim) else None
+        ) if has_time_cond else None
 
-        self.block1 = Block(dim, dim_out, dropout = dropout)
-        self.block2 = Block(dim_out, dim_out)
+        self.block1 = Block(dim, dim_out, dropout = dropout, accept_cond = has_time_cond)
+        self.block2 = Block(dim_out, dim_out, accept_cond = has_time_cond)
 
     def forward(self, x, time_emb = None):
 
