@@ -52,6 +52,7 @@ Memory = namedtuple('Memory', [
     'learnable',
     'state',
     'action',
+    'past_action',
     'reward',
     'is_boundary',
     'value',
@@ -180,7 +181,7 @@ class Actor(Module):
         hidden_dim,
         num_actions,
         dim_time = 16,
-        mlp_depth = 2,
+        mlp_depth = 3,
         dropout = 0.1,
     ):
         super().__init__()
@@ -215,6 +216,7 @@ class Critic(Module):
     def __init__(
         self,
         state_dim,
+        num_actions,
         hidden_dim,
         dim_pred = 1,
         mlp_depth = 6, # recent paper has findings that show scaling critic is more important than scaling actor
@@ -223,7 +225,7 @@ class Critic(Module):
         super().__init__()
 
         self.net = SimBa(
-            state_dim,
+            state_dim + num_actions,
             dim_hidden = hidden_dim,
             depth = mlp_depth,
             dropout = dropout
@@ -286,7 +288,7 @@ class PPO(Module):
         ema_kwargs: dict = dict(
             update_model_with_ema_every = 1000
         ),
-        reward_range = (-300., 300.),
+        reward_range = (-100., 100.),
         num_noise_monte_carlo = 4,
         loss_diff_clamp_value = 8.,
         save_path = './fpo.pt'
@@ -296,7 +298,7 @@ class PPO(Module):
         actor_network = Actor(state_dim, actor_hidden_dim, num_actions)
         self.actor = NanoFlow(actor_network, data_shape = (num_actions,), times_cond_kwarg = 'time', loss_fn = F.huber_loss)
 
-        self.critic = Critic(state_dim, critic_hidden_dim, dim_pred = critic_pred_num_bins)
+        self.critic = Critic(state_dim, num_actions, critic_hidden_dim, dim_pred = critic_pred_num_bins)
 
         # num noise monte carlo
 
@@ -364,6 +366,7 @@ class PPO(Module):
             learnable,
             states,
             action,
+            past_action,
             rewards,
             is_boundaries,
             values,
@@ -392,6 +395,7 @@ class PPO(Module):
 
         states = to_torch_tensor(states)
         action = to_torch_tensor(action)
+        past_action = to_torch_tensor(past_action)
         old_values = to_torch_tensor(values)
 
         # deepcopy the actor for the reference actor
@@ -402,7 +406,7 @@ class PPO(Module):
         # prepare dataloader for policy phase training
 
         learnable = tensor(learnable).to(device)
-        data = (states, action, returns, old_values)
+        data = (states, action, past_action, returns, old_values)
         data = tuple(t[learnable] for t in data)
 
         dataset = TensorDataset(*data)
@@ -415,7 +419,7 @@ class PPO(Module):
         clamp_value = self.loss_diff_clamp_value
 
         with tqdm(range(self.epochs)) as pbar:
-            for i, (states, action, returns, old_values) in enumerate(dl):
+            for i, (states, action, past_action, returns, old_values) in enumerate(dl):
 
                 batch = action.shape[0]
 
@@ -467,7 +471,7 @@ class PPO(Module):
 
                 # calculate clipped value loss and update value network separate from policy network
 
-                values = self.critic(states)
+                values = self.critic(cat((states, past_action), dim = -1))
                 critic_loss = hl_gauss(values, returns).mean()
 
                 critic_loss.backward()
@@ -486,7 +490,7 @@ def main(
     actor_hidden_dim = 32,
     actor_flow_timesteps = 16,
     critic_hidden_dim = 64,
-    critic_pred_num_bins = 250,
+    critic_pred_num_bins = 500,
     minibatch_size = 64,
     lr = 0.0003,
     betas = (0.9, 0.99),
@@ -495,7 +499,8 @@ def main(
     eps_clip = 0.05,
     cautious_factor = 0.1,
     ema_decay = 0.9,
-    update_timesteps = 2500,
+    update_timesteps = 5000,
+    memory_buffer_size = 10_000,
     advantage_offset_constant = 0.,
     epochs = 4,
     seed = None,
@@ -527,7 +532,7 @@ def main(
     state_dim = env.observation_space.shape[0]
     num_actions = env.action_space.shape[0]
 
-    memories = deque([])
+    memories = deque([], memory_buffer_size)
 
     agent = PPO(
         state_dim,
@@ -556,27 +561,33 @@ def main(
 
     time = 0
     num_policy_updates = 0
+    all_rewards = []
 
     for eps in tqdm(range(num_episodes), desc = 'episodes'):
 
         state, _ = env.reset(seed = seed)
         state = torch.from_numpy(state).to(device)
 
-        all_rewards = []
         cum_rewards = 0.
+        past_action = torch.zeros((num_actions,), device = device)
 
-        for timestep in range(max_timesteps):
+        for i in range(max_timesteps):
+            is_last = i == (max_timesteps - 1)
             time += 1
 
             actor_state = add_batch(state)
             action, noise = agent.ema_actor.sample(actor_flow_timesteps, state = actor_state, return_noise = True)
             action, noise = map(remove_batch, (action, noise))
 
-            value = agent.ema_critic.forward_eval(state)
+            value = agent.ema_critic.forward_eval(cat((state, past_action)))
 
             action_to_env = action.cpu().numpy()
 
             next_state, reward, terminated, truncated, _ = env.step(action_to_env)
+
+            action_out_of_bound_penalty = (action.abs() - 1.).relu().sum()
+
+            reward = reward - action_out_of_bound_penalty
 
             cum_rewards += reward
 
@@ -584,11 +595,12 @@ def main(
 
             reward = float(reward)
 
-            memory = Memory(True, state, action, reward, terminated, value)
+            memory = Memory(True, state, action, past_action, reward, terminated, value)
 
             memories.append(memory)
 
             state = next_state
+            past_action = action
 
             # determine if truncating, either from environment or learning phase of the agent
 
@@ -598,7 +610,7 @@ def main(
             # take care of truncated by adding a non-learnable memory storing the next value for GAE
 
             if done and not terminated:
-                next_value = agent.ema_critic.forward_eval(state)
+                next_value = agent.ema_critic.forward_eval(cat((state, past_action)))
 
                 bootstrap_value_memory = memory._replace(
                     state = state,
@@ -609,12 +621,11 @@ def main(
 
                 memories.append(bootstrap_value_memory)
 
-            all_rewards.append(cum_rewards)
-
             # updating of the agent
 
             if updating_agent:
                 rewards_tensor = tensor(all_rewards)
+
                 print(f'mean reward: {rewards_tensor.mean().item():.3f} | max reward: {rewards_tensor.amax().item():.3f}')
 
                 agent.learn(memories)
@@ -624,6 +635,9 @@ def main(
                 all_rewards.clear()
 
             # break if done
+
+            if done or is_last:
+                all_rewards.append(cum_rewards)
 
             if done:
                 break
