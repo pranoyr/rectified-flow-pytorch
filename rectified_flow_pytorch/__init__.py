@@ -15,3 +15,5 @@ from rectified_flow_pytorch.reflow import (
 )
 
 from rectified_flow_pytorch.split_mean_flow import SplitMeanFlow
+
+from rectified_flow_pytorch.equilibrium_matching import EquilibriumMatching

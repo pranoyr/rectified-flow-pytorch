@@ -270,3 +270,15 @@ $ python train_oxford.py
     url     = {https://arxiv.org/abs/2512.15657}, 
 }
 ```
+
+```bibtex
+@misc{wang2025equilibriummatchinggenerativemodeling,
+    title   = {Equilibrium Matching: Generative Modeling with Implicit Energy-Based Models}, 
+    author  = {Runqian Wang and Yilun Du},
+    year    = {2025},
+    eprint  = {2510.02300},
+    archivePrefix = {arXiv},
+    primaryClass = {cs.LG},
+    url     = {https://arxiv.org/abs/2510.02300}, 
+}
+```

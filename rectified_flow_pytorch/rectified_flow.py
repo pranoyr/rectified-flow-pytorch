@@ -734,6 +734,7 @@ class Unet(Module):
         num_residual_streams = 2,
         accept_cond = False,
         dim_cond = None,
+        accept_time = True,
         accept_dest_time = False,
         num_outputs = 1
     ):
@@ -752,22 +753,25 @@ class Unet(Module):
         # time embeddings
 
         time_dim = dim * 4
+        self.accept_time = accept_time
+        self.time_mlp = None
 
-        self.random_or_learned_sinusoidal_cond = learned_sinusoidal_cond or random_fourier_features
+        if accept_time:
+            self.random_or_learned_sinusoidal_cond = learned_sinusoidal_cond or random_fourier_features
 
-        if self.random_or_learned_sinusoidal_cond:
-            sinu_pos_emb = RandomOrLearnedSinusoidalPosEmb(learned_sinusoidal_dim, random_fourier_features)
-            fourier_dim = learned_sinusoidal_dim + 1
-        else:
-            sinu_pos_emb = SinusoidalPosEmb(dim, theta = sinusoidal_pos_emb_theta)
-            fourier_dim = dim
+            if self.random_or_learned_sinusoidal_cond:
+                sinu_pos_emb = RandomOrLearnedSinusoidalPosEmb(learned_sinusoidal_dim, random_fourier_features)
+                fourier_dim = learned_sinusoidal_dim + 1
+            else:
+                sinu_pos_emb = SinusoidalPosEmb(dim, theta = sinusoidal_pos_emb_theta)
+                fourier_dim = dim
 
-        self.time_mlp = nn.Sequential(
-            sinu_pos_emb,
-            nn.Linear(fourier_dim, time_dim),
-            nn.GELU(),
-            nn.Linear(time_dim, time_dim)
-        )
+            self.time_mlp = nn.Sequential(
+                sinu_pos_emb,
+                nn.Linear(fourier_dim, time_dim),
+                nn.GELU(),
+                nn.Linear(time_dim, time_dim)
+            )
 
         # destination time encoding - for a variety of newer consistency research related work
 
@@ -804,7 +808,7 @@ class Unet(Module):
         # prepare blocks
 
         FullAttention = partial(Attention, flash = flash_attn)
-        resnet_block = partial(ResnetBlock, time_emb_dim = time_dim, dropout = dropout)
+        resnet_block = partial(ResnetBlock, time_emb_dim = time_dim if accept_time else None, dropout = dropout)
 
         # hyper connections
 
@@ -863,14 +867,16 @@ class Unet(Module):
     def downsample_factor(self):
         return 2 ** (len(self.downs) - 1)
 
-    def forward(self, x, times, s = None, cond = None):
+    def forward(self, x, times = None, s = None, cond = None):
         assert all([divisible_by(d, self.downsample_factor) for d in x.shape[-2:]]), f'your input dimensions {x.shape[-2:]} need to be divisible by {self.downsample_factor}, given the unet'
 
         x = self.init_conv(x)
 
         r = x.clone()
 
-        t = self.time_mlp(times)
+        assert not (exists(times) and not self.accept_time), 'time cannot be passed into Unet when `accept_time` is set to False'
+
+        t = self.time_mlp(times) if exists(self.time_mlp) and exists(times) else None
 
         # maybe additional time cond
 
@@ -949,6 +955,7 @@ class Unet(Module):
 # dataset classes
 
 from pathlib import Path
+from shutil import rmtree
 
 from torch.utils.data import Dataset
 import torchvision.transforms as T
@@ -1030,7 +1037,8 @@ class Trainer(Module):
         accelerate_kwargs: dict = dict(),
         ema_kwargs: dict = dict(),
         use_ema = True,
-        max_grad_norm = 0.5
+        max_grad_norm = 0.5,
+        clear_results_folder = False
     ):
         super().__init__()
         self.accelerator = Accelerator(**accelerate_kwargs)
@@ -1075,6 +1083,9 @@ class Trainer(Module):
 
         self.checkpoints_folder = Path(checkpoints_folder)
         self.results_folder = Path(results_folder)
+
+        if self.is_main and clear_results_folder and self.results_folder.exists():
+            rmtree(str(self.results_folder))
 
         self.checkpoints_folder.mkdir(exist_ok = True, parents = True)
         self.results_folder.mkdir(exist_ok = True, parents = True)

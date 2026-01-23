@@ -1,0 +1,133 @@
+from __future__ import annotations
+import torch
+from torch.nn import Module
+import torch.nn.functional as F
+
+# functions
+
+def exists(v):
+    return v is not None
+
+def default(v, d):
+    return v if exists(v) else d
+
+def identity(t):
+    return t
+
+def append_dims(t, dims):
+    shape = t.shape
+    ones = ((1,) * dims)
+    return t.reshape(*shape, *ones)
+
+# truncated decay, best performing
+
+def truncated_decay(gamma, a = 0.8):
+    return torch.where(
+        gamma <= a,
+        torch.ones_like(gamma),
+        (1. - gamma) / (1. - a)
+    )
+
+class EquilibriumMatching(Module):
+    def __init__(
+        self,
+        model: Module,
+        data_shape = None,
+        normalize_data_fn = identity,
+        unnormalize_data_fn = identity,
+        decay_fn: Callable = truncated_decay,
+        decay_kwargs: dict = dict(a = 0.8),
+        lambda_multiplier = 4.0,
+        loss_fn = F.mse_loss
+    ):
+        super().__init__()
+        self.model = model
+        self.data_shape = data_shape
+
+        self.normalize_data_fn = normalize_data_fn
+        self.unnormalize_data_fn = unnormalize_data_fn
+
+        self.decay_fn = decay_fn
+        self.decay_kwargs = decay_kwargs
+        self.lambda_multiplier = lambda_multiplier
+
+        self.loss_fn = loss_fn
+
+    @torch.no_grad()
+    def sample(
+        self,
+        steps = 100,
+        batch_size = 1,
+        data_shape = None,
+        return_noise = False,
+        step_size = 0.003,    # step size for gradient descent
+        momentum = 0.35,      # momentum
+        **kwargs
+    ):
+        data_shape = default(data_shape, self.data_shape)
+        assert exists(data_shape), 'shape of the data must be passed in, or set at init or during training'
+        device = next(self.model.parameters()).device
+
+        noise = torch.randn((batch_size, *data_shape), device = device)
+        x = noise
+        v = torch.zeros_like(x)
+
+        # EqM sampling with Nesterov Accelerated Gradient
+
+        for _ in range(steps):
+            x_lookahead = x + momentum * v
+
+            grad = self.model(x_lookahead, **kwargs)
+
+            v = momentum * v - step_size * grad
+            x = x + v
+
+        out = self.unnormalize_data_fn(x)
+
+        if not return_noise:
+            return out
+
+        return out, noise
+
+    def forward(self, data, noise = None, times = None, loss_reduction = 'mean', **kwargs):
+        data = self.normalize_data_fn(data)
+
+        # shapes and variables
+
+        shape, ndim = data.shape, data.ndim
+        self.data_shape = default(self.data_shape, shape[1:])
+        batch, device = shape[0], data.device
+
+        # EqM logic - resembles flow matching but with decay of flow (viewed as gradient now) as it approaches data
+
+        times = default(times, torch.rand(batch, device = device))
+
+        noise = default(noise, torch.randn_like(data))
+
+        padded_times = append_dims(times, ndim - 1)
+        noised_data = noise.lerp(data, padded_times)
+
+        # target gradient: (noise - data) * lambda * c(gamma)
+
+        decay = self.decay_fn(times, **self.decay_kwargs)
+        padded_decay = append_dims(decay, ndim - 1)
+
+        target_grad = (noise - data) * self.lambda_multiplier * padded_decay
+        
+        model_output = self.model(noised_data, **kwargs)
+
+        return self.loss_fn(model_output, target_grad, reduction = loss_reduction)
+
+# quick test
+
+if __name__ == '__main__':
+    model = torch.nn.Conv2d(3, 3, 1)
+
+    eq_matching = EquilibriumMatching(model)
+    data = torch.randn(16, 3, 16, 16)
+
+    loss = eq_matching(data)
+    loss.backward()
+
+    sampled = eq_matching.sample(batch_size = 16)
+    assert sampled.shape == data.shape
