@@ -1110,10 +1110,21 @@ class Trainer(Module):
     def save(self, path):
         if not self.is_main:
             return
+        
+        unwrapped_model = self.accelerator.unwrap_model(self.model)
+        
+        if self.ema_model is not None:
+            ema_state = self.ema_model.state_dict()
+
+        elif hasattr(unwrapped_model, 'ema_model') and unwrapped_model.ema_model is not None:
+            ema_state = unwrapped_model.ema_model.state_dict()
+    
+        else:
+            ema_state = None
 
         save_package = dict(
-            model = self.accelerator.unwrap_model(self.model).state_dict(),
-            ema_model = self.ema_model.state_dict(),
+            model = unwrapped_model.state_dict(),
+            ema_model = ema_state,
             optimizer = self.optimizer.state_dict(),
         )
 
@@ -1122,11 +1133,20 @@ class Trainer(Module):
     def load(self, path):
         if not self.is_main:
             return
-        
-        load_package = torch.load(path)
+
+        load_package = torch.load(self.checkpoints_folder / path)
         
         self.model.load_state_dict(load_package["model"])
-        self.ema_model.load_state_dict(load_package["ema_model"])
+
+        # load ema
+        ema_state = load_package["ema_model"]
+        if ema_state is not None:
+            if self.ema_model is not None:
+                self.ema_model.load_state_dict(ema_state)
+            
+            elif hasattr(self.model, 'ema_model') and self.model.ema_model is not None:
+                self.model.ema_model.load_state_dict(ema_state)
+   
         self.optimizer.load_state_dict(load_package["optimizer"])
 
     def log(self, *args, **kwargs):
