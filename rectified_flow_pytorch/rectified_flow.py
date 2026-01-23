@@ -1113,14 +1113,13 @@ class Trainer(Module):
         
         unwrapped_model = self.accelerator.unwrap_model(self.model)
         
-        if self.ema_model is not None:
+        ema_state = None
+
+        if exists(self.ema_model):
             ema_state = self.ema_model.state_dict()
 
         elif hasattr(unwrapped_model, 'ema_model') and unwrapped_model.ema_model is not None:
             ema_state = unwrapped_model.ema_model.state_dict()
-    
-        else:
-            ema_state = None
 
         save_package = dict(
             model = unwrapped_model.state_dict(),
@@ -1139,12 +1138,14 @@ class Trainer(Module):
         self.model.load_state_dict(load_package["model"])
 
         # load ema
+
         ema_state = load_package["ema_model"]
-        if ema_state is not None:
-            if self.ema_model is not None:
+
+        if exists(ema_state):
+            if exists(self.ema_model):
                 self.ema_model.load_state_dict(ema_state)
             
-            elif hasattr(self.model, 'ema_model') and self.model.ema_model is not None:
+            elif exists(getattr(self.model, 'ema_model', None)):
                 self.model.ema_model.load_state_dict(ema_state)
    
         self.optimizer.load_state_dict(load_package["optimizer"])

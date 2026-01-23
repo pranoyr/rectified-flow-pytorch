@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 import torch
+from torch import tensor
 from torch.nn import Module
 import torch.nn.functional as F
 
@@ -48,6 +50,8 @@ class EquilibriumMatching(Module):
         self.unnormalize_data_fn = unnormalize_data_fn
 
         self.decay_fn = decay_fn
+        assert decay_fn(tensor(1.)).item() == 0., 'the decay function `c` must be 0 at 1'
+
         self.decay_kwargs = decay_kwargs
         self.lambda_multiplier = lambda_multiplier
 
