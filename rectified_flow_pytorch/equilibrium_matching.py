@@ -4,6 +4,7 @@ import torch
 from torch import tensor
 from torch.nn import Module
 import torch.nn.functional as F
+from torch.optim import Optimizer, SGD
 
 # functions
 
@@ -40,7 +41,9 @@ class EquilibriumMatching(Module):
         decay_fn: Callable = truncated_decay,
         decay_kwargs: dict = dict(a = 0.8),
         lambda_multiplier = 4.0,
-        loss_fn = F.mse_loss
+        loss_fn = F.mse_loss,
+        sample_optim_klass: type[Optimizer] = SGD,
+        sample_optim_kwargs: dict = dict(lr = 0.003, momentum = 0.35, nesterov = True), # their best performing used sgd with nesterov momentum on truncated decay
     ):
         super().__init__()
         self.model = model
@@ -57,6 +60,9 @@ class EquilibriumMatching(Module):
 
         self.loss_fn = loss_fn
 
+        self.sample_optim_klass = sample_optim_klass
+        self.sample_optim_kwargs = sample_optim_kwargs
+
     @torch.no_grad()
     def sample(
         self,
@@ -64,8 +70,8 @@ class EquilibriumMatching(Module):
         batch_size = 1,
         data_shape = None,
         return_noise = False,
-        step_size = 0.003,    # step size for gradient descent
-        momentum = 0.35,      # momentum
+        optim_klass = None ,
+        optim_kwargs = None,
         **kwargs
     ):
         data_shape = default(data_shape, self.data_shape)
@@ -74,17 +80,21 @@ class EquilibriumMatching(Module):
 
         noise = torch.randn((batch_size, *data_shape), device = device)
         x = noise
-        v = torch.zeros_like(x)
 
-        # EqM sampling with Nesterov Accelerated Gradient
+        # optimizer
+
+        optim_klass = default(optim_klass, self.sample_optim_klass)
+        optim_kwargs = default(optim_kwargs, self.sample_optim_kwargs)
+
+        optim = optim_klass([x], **optim_kwargs)
+
+        # descend
 
         for _ in range(steps):
-            x_lookahead = x + momentum * v
-
-            grad = self.model(x_lookahead, **kwargs)
-
-            v = momentum * v - step_size * grad
-            x = x + v
+            optim.zero_grad()
+            grad = self.model(x, **kwargs)
+            x.grad = grad
+            optim.step()
 
         out = self.unnormalize_data_fn(x)
 

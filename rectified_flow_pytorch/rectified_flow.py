@@ -1033,6 +1033,7 @@ class Trainer(Module):
         checkpoint_every: int = 1000,
         sample_temperature: float = 1.,
         num_samples: int = 16,
+        sample_kwargs: dict = dict(),
         adam_kwargs: dict = dict(),
         accelerate_kwargs: dict = dict(),
         ema_kwargs: dict = dict(),
@@ -1098,6 +1099,8 @@ class Trainer(Module):
         assert (self.num_sample_rows ** 2) == num_samples, f'{num_samples} must be a square'
         self.num_samples = num_samples
 
+        self.sample_kwargs = sample_kwargs
+
         assert self.checkpoints_folder.is_dir()
         assert self.results_folder.is_dir()
 
@@ -1158,11 +1161,13 @@ class Trainer(Module):
 
     def sample(self, fname):
         eval_model = default(self.ema_model, self.model)
+
         dl = cycle(self.dl)
         mock_data = next(dl)
         data_shape = mock_data.shape[1:]
 
-        additional_sample_kwargs = dict()
+        additional_sample_kwargs = self.sample_kwargs.copy()
+
         if isinstance(eval_model.model, RectifiedFlow):
             additional_sample_kwargs.update(temperature = self.sample_temperature)
 

@@ -1,6 +1,9 @@
+from torch.optim import Adam, SGD
 from torch.utils.data import Dataset
+
 import torchvision.transforms as T
 from datasets import load_dataset
+
 from rectified_flow_pytorch import EquilibriumMatching, Unet, Trainer
 
 # hf datasets for easy oxford flowers training
@@ -47,7 +50,9 @@ model = Unet(
 eqm = EquilibriumMatching(
     model,
     decay_kwargs = dict(a = 0.8),
-    lambda_multiplier = 4.0
+    lambda_multiplier = 4.0,
+    sample_optim_klass = Adam,
+    sample_optim_kwargs = dict(lr = 0.003)
 )
 
 # trainer
