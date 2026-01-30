@@ -282,3 +282,15 @@ $ python train_oxford.py
     url     = {https://arxiv.org/abs/2510.02300}, 
 }
 ```
+
+```bibtex
+@misc{boffi2025buildconsistencymodellearning,
+    title   = {How to build a consistency model: Learning flow maps via self-distillation}, 
+    author  = {Nicholas M. Boffi and Michael S. Albergo and Eric Vanden-Eijnden},
+    year    = {2025},
+    eprint  = {2505.18825},
+    archivePrefix = {arXiv},
+    primaryClass = {cs.LG},
+    url     = {https://arxiv.org/abs/2505.18825}, 
+}
+```
